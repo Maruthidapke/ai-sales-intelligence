@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --color-midnight-950: #06080F;
+  --color-midnight-900: #0A0E17;
+  --color-midnight-850: #0E1422;
+  --color-midnight-800: #141D30;
+  --color-midnight-700: #1D2A45;
+  --color-midnight-600: #2A3B5E;
+
+  --color-cobalt: #2563EB;
+  --color-cobalt-light: #3B82F6;
+  --color-cobalt-dark: #1D4ED8;
+  --color-cobalt-glow: #60A5FA;
+
+  --color-acid: #84CC16;
+  --color-acid-light: #A3E635;
+  --color-acid-dark: #65A30D;
+  --color-acid-glow: #BEF264;
+}
+
+body {
+  background-color: #06080F;
+  color: #F8FAFC;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Glassmorphism & Liquid Glass Utility */
+.glass-panel {
+  background: rgba(14, 20, 34, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+}
+
+.glass-panel-hover {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel-hover:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+  box-shadow: 0 12px 40px -10px rgba(37, 99, 235, 0.25);
+  transform: translateY(-2px);
+}
+
+/* Subtle 3D Perspective Card */
+.card-3d-wrap {
+  perspective: 1000px;
+}
+
+.card-3d {
+  transition: transform 0.3s ease;
+  transform-style: preserve-3d;
+}
+
+.card-3d:hover {
+  transform: rotateX(2deg) rotateY(-2deg) translateZ(8px);
+}
+
+/* Neon Glow Accents */
+.shadow-cobalt-glow {
+  box-shadow: 0 0 25px -5px rgba(37, 99, 235, 0.45);
+}
+
+.shadow-acid-glow {
+  box-shadow: 0 0 25px -5px rgba(163, 230, 53, 0.45);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0A0E17;
+}
+::-webkit-scrollbar-thumb {
+  background: #1D2A45;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2563EB;
+}

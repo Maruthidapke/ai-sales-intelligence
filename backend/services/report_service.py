@@ -133,7 +133,8 @@ def generate_pdf_report(
     story.append(Spacer(1, 12))
 
     # 4. Upcoming Forecast Preview
-    story.append(Paragraph("4. 1-Week-Ahead Sales Forecast (Date: 2012-11-02)", heading_style))
+    fc_date = forecasts[0].get("Forecast_Date", "Upcoming Horizon") if forecasts else "Upcoming Horizon"
+    story.append(Paragraph(f"4. 1-Week-Ahead Sales Forecast (Date: {fc_date})", heading_style))
     fc_table_data = [["Store", "Forecast (USD)", "90% Lower Bound", "90% Upper Bound", "13W Prior Mean", "Shift (%)", "Alert Status"]]
     # Top 15 stores preview
     for row in forecasts[:15]:

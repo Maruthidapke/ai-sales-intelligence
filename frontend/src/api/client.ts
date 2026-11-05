@@ -1,14 +1,15 @@
 import axios from 'axios';
 import {
   DatasetSummary,
-  DatasetRow,
   SalesAnalytics,
   StoreRanking,
   BenchmarkModel,
   BacktestModel,
   StoreForecast,
   ForecastSummary,
-  DiagnosticsData
+  DiagnosticsData,
+  ResidualsAnalysis,
+  ActualVsPredictedPoint
 } from '../types/api';
 
 const api = axios.create({
@@ -81,6 +82,11 @@ export const apiClient = {
     return res.data;
   },
 
+  getResidualsAnalysis: async (): Promise<ResidualsAnalysis> => {
+    const res = await api.get('/models/residuals');
+    return res.data.data;
+  },
+
   getStoreErrors: async () => {
     const res = await api.get('/models/store-errors');
     return res.data.data;
@@ -98,6 +104,12 @@ export const apiClient = {
     return res.data.data;
   },
 
+  getActualVsPredicted: async (storeId?: number | null): Promise<ActualVsPredictedPoint[]> => {
+    const params = storeId ? { store_id: storeId } : {};
+    const res = await api.get('/forecast/actual-vs-predicted', { params });
+    return res.data.data;
+  },
+
   generateForecast: async (storeId?: number | null, modelName?: string) => {
     const res = await api.post('/forecast/generate', {
       store_id: storeId,
@@ -110,4 +122,3 @@ export const apiClient = {
   downloadPdfUrl: '/api/reports/pdf',
   downloadCsvUrl: '/api/reports/csv',
 };
-

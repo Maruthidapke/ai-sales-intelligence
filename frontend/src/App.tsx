@@ -16,39 +16,46 @@ export function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [datasetSummary, setDatasetSummary] = useState<DatasetSummary | null>(null);
+  const [datasetVersion, setDatasetVersion] = useState(0);
+
+  const fetchSummary = async () => {
+    try {
+      const sum = await apiClient.getDatasetSummary();
+      setDatasetSummary(sum);
+    } catch (err) {
+      console.error('Failed to load dataset summary', err);
+    }
+  };
 
   useEffect(() => {
-    const fetchSummary = async () => {
-      try {
-        const sum = await apiClient.getDatasetSummary();
-        setDatasetSummary(sum);
-      } catch (err) {
-        console.error('Failed to load dataset summary', err);
-      }
-    };
     fetchSummary();
-  }, []);
+  }, [datasetVersion]);
+
+  const handleDatasetChange = async () => {
+    await fetchSummary();
+    setDatasetVersion((v) => v + 1);
+  };
 
   const renderActivePage = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <DashboardPage onNavigate={(tab) => setActiveTab(tab)} />;
+        return <DashboardPage key={datasetVersion} onNavigate={(tab) => setActiveTab(tab)} />;
       case 'dataset':
-        return <DatasetPage />;
+        return <DatasetPage key={datasetVersion} onDatasetChange={handleDatasetChange} />;
       case 'analytics':
-        return <AnalyticsPage />;
+        return <AnalyticsPage key={datasetVersion} />;
       case 'forecast':
-        return <ForecastPage />;
+        return <ForecastPage key={datasetVersion} />;
       case 'comparison':
-        return <ComparisonPage />;
+        return <ComparisonPage key={datasetVersion} />;
       case 'diagnostics':
-        return <DiagnosticsPage />;
+        return <DiagnosticsPage key={datasetVersion} />;
       case 'reports':
-        return <ReportsPage />;
+        return <ReportsPage key={datasetVersion} />;
       case 'settings':
-        return <SettingsPage />;
+        return <SettingsPage key={datasetVersion} onResetCache={handleDatasetChange} />;
       default:
-        return <DashboardPage onNavigate={(tab) => setActiveTab(tab)} />;
+        return <DashboardPage key={datasetVersion} onNavigate={(tab) => setActiveTab(tab)} />;
     }
   };
 

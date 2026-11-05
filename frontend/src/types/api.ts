@@ -14,6 +14,14 @@ export interface DatasetSummary {
   std_weekly_sales: number;
   max_sales: number;
   min_sales: number;
+  highest_performing_store?: {
+    store_id: number;
+    total_sales: number;
+  };
+  best_sales_week?: {
+    date: string;
+    total_sales: number;
+  };
   missing_cells: number;
   duplicate_rows: number;
 }
@@ -52,6 +60,22 @@ export interface SalesAnalytics {
   };
   monthly_seasonality: {
     month: string;
+    avg_sales: number;
+  }[];
+  yearly_trends?: {
+    year: number;
+    total_sales: number;
+    avg_sales: number;
+  }[];
+  sales_distribution?: {
+    bin: string;
+    count: number;
+    range_min: number;
+    range_max: number;
+  }[];
+  store_comparison?: {
+    store: string;
+    store_id: number;
     avg_sales: number;
   }[];
 }
@@ -158,3 +182,36 @@ export interface DiagnosticsData {
   };
 }
 
+export interface ResidualsAnalysis {
+  mean_error: number;
+  std_error: number;
+  outliers_count: number;
+  outliers: {
+    Store: number;
+    Date: string;
+    Actual: number;
+    Predicted: number;
+    Error: number;
+    Abs_Error: number;
+    Std_Deviations: number;
+  }[];
+  residual_distribution: {
+    bin: string;
+    count: number;
+    range_min: number;
+    range_max: number;
+  }[];
+  actual_vs_predicted_timeline: {
+    Date_Str: string;
+    Actual_Sales: number;
+    Predicted_Sales: number;
+  }[];
+  total_eval_points: number;
+}
+
+export interface ActualVsPredictedPoint {
+  Date: string;
+  Actual: number | null;
+  Predicted: number;
+  Type: string;
+}

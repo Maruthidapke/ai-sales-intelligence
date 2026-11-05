@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/models", tags=["Models"])
 
 @router.get("/benchmarks")
 def get_benchmarks():
-    """Returns the original 14-week holdout benchmark comparison."""
+    """Returns benchmark comparison across all 5 models."""
     try:
         benchmarks = ModelService.get_benchmark_comparison()
         return {"success": True, "data": benchmarks}
@@ -23,7 +23,7 @@ def get_benchmarks():
 
 @router.get("/backtest")
 def get_nested_backtest():
-    """Returns the 4-period nested backtest results where Seasonal Baseline wins."""
+    """Returns the 4-period nested backtest results."""
     try:
         results = ModelService.get_nested_backtest_results()
         return {"success": True, "data": results}
@@ -55,14 +55,19 @@ def get_model_diagnostics():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/residuals")
+def get_model_residuals():
+    """Returns detailed prediction error analysis, residual distribution, and outliers."""
+    try:
+        data = ModelService.get_residuals_analysis()
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/store-errors")
 def get_store_errors():
-    """Returns store-level error breakdown on the 14-week holdout."""
+    """Returns store-level error breakdown on the holdout evaluation."""
     try:
-        df = DataStore.get_data()
-        sup_df = prepare_supervised_data(df)
-        dev, test = get_train_test_split(sup_df)
-        ModelService.train_or_load(dev, test)
         errors = ModelService.get_store_level_errors()
         return {"success": True, "data": errors}
     except Exception as e:

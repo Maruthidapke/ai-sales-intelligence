@@ -1,36 +1,87 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FileText,
   FileSpreadsheet,
   Download,
-  CheckCircle,
-  ExternalLink,
-  ShieldCheck,
-  FileCheck2,
-  Printer
+  FileCheck2
 } from 'lucide-react';
 
 import { BentoCard } from '../components/BentoCard';
 import { apiClient } from '../api/client';
+import { DatasetSummary } from '../types/api';
+import { useForecastScope } from '../state/ForecastScopeContext';
 
 export const ReportsPage: React.FC = () => {
+  const { scope } = useForecastScope();
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [downloadingCsv, setDownloadingCsv] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [dataset, setDataset] = useState<DatasetSummary | null>(null);
 
-  const handleDownloadPdf = () => {
-    setDownloadingPdf(true);
-    window.location.href = apiClient.downloadPdfUrl;
-    setTimeout(() => setDownloadingPdf(false), 2000);
+  useEffect(() => {
+    apiClient.getDatasetSummary()
+      .then(setDataset)
+      .catch((error) => {
+        console.error(error);
+        setDownloadError('Active dataset metadata is unavailable.');
+      });
+  }, []);
+
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const handleDownloadCsv = () => {
-    setDownloadingCsv(true);
-    window.location.href = apiClient.downloadCsvUrl;
-    setTimeout(() => setDownloadingCsv(false), 2000);
+  const handleDownloadPdf = async () => {
+    try {
+      setDownloadingPdf(true);
+      setDownloadError(null);
+      triggerDownload(await apiClient.downloadPdf({
+        storeId: scope.storeId,
+        modelName: scope.modelName,
+        forecastDate: scope.forecastDate,
+        dateMode: scope.dateMode,
+      }), 'VORTEX_Retail_Forecasting_Report.pdf');
+    } catch (error) {
+      const message = (error as Error).message || 'PDF report generation failed.';
+      setDownloadError(message);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  const handleDownloadCsv = async () => {
+    try {
+      setDownloadingCsv(true);
+      setDownloadError(null);
+      const { blob, filename } = await apiClient.downloadForecastCsv({
+        storeId: scope.storeId,
+        modelName: scope.modelName,
+        forecastDate: scope.forecastDate,
+        dateMode: scope.dateMode,
+      });
+      triggerDownload(blob, filename);
+    } catch (error) {
+      console.error(error);
+      setDownloadError((error as Error).message || 'Forecast CSV generation failed.');
+    } finally {
+      setDownloadingCsv(false);
+    }
   };
 
   return (
     <div className="space-y-6">
+      {downloadError && (
+        <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-200" role="alert">
+          {downloadError}
+        </div>
+      )}
       {/* Top Banner */}
       <div className="p-4 sm:p-5 rounded-2xl glass-panel border border-white/[0.08] flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -39,7 +90,9 @@ export const ReportsPage: React.FC = () => {
             Publication-Grade Executive Briefings & Dataset Exports
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Download verified machine learning benchmarks, store forecast ledgers, and audit-ready PDF summaries
+            Exports use the active dataset{dataset ? ` (${dataset.original_filename || 'canonical dataset'}, ${dataset.total_rows.toLocaleString()} records)` : ''}
+            {` · ${scope.storeId == null ? 'All stores' : `Store ${scope.storeId}`} · ${scope.modelName} · ${scope.dateMode === 'future' ? 'Future Forecast' : 'Historical Next-Week Evaluation'}`}
+            {scope.forecastDate ? ` · ${scope.forecastDate}` : ''}.
           </p>
         </div>
 
@@ -87,10 +140,11 @@ export const ReportsPage: React.FC = () => {
               </div>
               <ul className="space-y-1.5 text-slate-400 text-[11px] list-disc list-inside">
                 <li>Executive Dataset Summary & SHA-256 fingerprint</li>
-                <li>Original 14-Week Holdout Benchmark Model comparison table</li>
-                <li>Empirical prediction band coverage & Store 36 caution disclaimer</li>
-                <li>Store-by-store sales forecast ledger with nominal 90% bounds</li>
-                <li>Zero-leakage chronological validation protocol statement</li>
+                <li>Active-dataset chronological holdout model comparison when sufficient history exists</li>
+                <li>Runtime prediction-interval reliability results and applicable limitations</li>
+                <li>Forecast ledger for the selected scope and model only when actual results can be generated</li>
+                <li>Selected store, model, target date and forecast mode</li>
+                <li>Active dataset identity, dimensions, and SHA-256 fingerprint</li>
               </ul>
             </div>
 
@@ -121,10 +175,10 @@ export const ReportsPage: React.FC = () => {
                 <span>Exported Columns & Fields</span>
               </div>
               <ul className="space-y-1.5 text-slate-400 text-[11px] list-disc list-inside">
-                <li><code className="text-white">Store</code>: Store ID number (1 to 45)</li>
-                <li><code className="text-white">Forecast_Date</code>: Target date (2012-11-02)</li>
-                <li><code className="text-white">Forecast_Sales</code>: Machine learning point estimate ($)</li>
-                <li><code className="text-white">Lower_Bound / Upper_Bound</code>: 90% nominal empirical bands</li>
+                <li><code className="text-white">Store</code>: Store IDs present in the active dataset</li>
+                <li><code className="text-white">Forecast_Date</code>: One week after the latest active observation</li>
+                <li><code className="text-white">Forecast_Sales</code>: Supported point forecast ($)</li>
+                <li><code className="text-white">Lower_Bound / Upper_Bound</code>: Available only where calibrated</li>
                 <li><code className="text-white">Change_vs_Mean_Pct</code>: Deviation vs 13W moving mean</li>
                 <li><code className="text-white">Alert</code>: NORMAL, HIGH, or LOW status</li>
               </ul>
@@ -132,7 +186,7 @@ export const ReportsPage: React.FC = () => {
 
             <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
               <span>Format: <strong>UTF-8 RFC-4180 CSV</strong></span>
-              <span className="text-acid-light font-mono font-medium">45 Rows + Headers</span>
+              <span className="text-acid-light font-mono font-medium">{dataset ? `${dataset.total_stores} store forecasts` : 'Active store forecasts'}</span>
             </div>
           </div>
         </BentoCard>
@@ -140,4 +194,3 @@ export const ReportsPage: React.FC = () => {
     </div>
   );
 };
-

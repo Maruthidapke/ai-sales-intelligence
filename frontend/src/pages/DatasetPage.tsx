@@ -15,10 +15,15 @@ import {
 import { apiClient } from '../api/client';
 import { BentoCard } from '../components/BentoCard';
 import { StatusPill } from '../components/StatusPill';
-import { DatasetSummary, DatasetRow } from '../types/api';
+import { DatasetSummary, DatasetRow, UploadedDataset } from '../types/api';
 
-export const DatasetPage: React.FC = () => {
+interface DatasetPageProps {
+  onDatasetChange: () => void;
+}
+
+export const DatasetPage: React.FC<DatasetPageProps> = ({ onDatasetChange }) => {
   const [summary, setSummary] = useState<DatasetSummary | null>(null);
+  const [uploads, setUploads] = useState<UploadedDataset[]>([]);
   const [rows, setRows] = useState<DatasetRow[]>([]);
   const [totalRows, setTotalRows] = useState(0);
   const [page, setPage] = useState(1);
@@ -34,8 +39,11 @@ export const DatasetPage: React.FC = () => {
     try {
       const sum = await apiClient.getDatasetSummary();
       setSummary(sum);
+      setUploads(await apiClient.getUploadedDatasets());
     } catch (err) {
       console.error(err);
+      const detail = (err as any)?.response?.data?.detail;
+      setUploadMsg({ type: 'error', text: typeof detail === 'string' ? detail : 'Could not load active dataset metadata and upload history.' });
     }
   };
 
@@ -53,6 +61,8 @@ export const DatasetPage: React.FC = () => {
       setTotalRows(res.total);
     } catch (err) {
       console.error(err);
+      const detail = (err as any)?.response?.data?.detail;
+      setUploadMsg({ type: 'error', text: typeof detail === 'string' ? detail : 'Could not load records for the selected filters.' });
     } finally {
       setLoading(false);
     }
@@ -76,8 +86,10 @@ export const DatasetPage: React.FC = () => {
       const res = await apiClient.uploadDataset(file);
       setUploadMsg({ type: 'success', text: res.message });
       setSummary(res.summary);
+      setUploads(await apiClient.getUploadedDatasets());
       setPage(1);
-      fetchRows();
+      await fetchRows();
+      onDatasetChange();
     } catch (err: any) {
       const errDetail = err?.response?.data?.detail || 'Failed to upload and validate CSV.';
       setUploadMsg({ type: 'error', text: errDetail });
@@ -89,13 +101,39 @@ export const DatasetPage: React.FC = () => {
 
   const handleReset = async () => {
     try {
+      setUploading(true);
+      setUploadMsg(null);
       const res = await apiClient.resetDataset();
       setSummary(res.summary);
+      setUploads(await apiClient.getUploadedDatasets());
       setUploadMsg({ type: 'success', text: 'Dataset reset to canonical Walmart.csv.' });
       setPage(1);
-      fetchRows();
-    } catch (err) {
+      await fetchRows();
+      onDatasetChange();
+    } catch (err: any) {
       console.error(err);
+      const detail = err?.response?.data?.detail;
+      setUploadMsg({ type: 'error', text: typeof detail === 'string' ? detail : 'Could not reset the active dataset.' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleActivateUpload = async (storedFilename: string) => {
+    try {
+      setUploading(true);
+      const res = await apiClient.activateUploadedDataset(storedFilename);
+      setSummary(res.summary);
+      setUploads(await apiClient.getUploadedDatasets());
+      setPage(1);
+      setUploadMsg({ type: 'success', text: `Active dataset: ${res.summary.original_filename}` });
+      await fetchRows();
+      onDatasetChange();
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || 'Could not select the uploaded dataset.';
+      setUploadMsg({ type: 'error', text: detail });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -135,7 +173,7 @@ export const DatasetPage: React.FC = () => {
             </div>
             <div className="flex justify-between py-1 border-b border-white/[0.04]">
               <span className="text-slate-400">Number of Stores:</span>
-              <span className="font-mono text-white">{summary?.total_stores} (IDs 1–{summary?.total_stores})</span>
+              <span className="font-mono text-white">{summary?.total_stores} (IDs {summary?.store_ids.join(', ')})</span>
             </div>
             <div className="flex justify-between py-1 border-b border-white/[0.04]">
               <span className="text-slate-400">Observations Per Store:</span>
@@ -151,7 +189,9 @@ export const DatasetPage: React.FC = () => {
             </div>
             <div className="flex justify-between py-1">
               <span className="text-slate-400">Chronological Spacing:</span>
-              <span className="font-mono text-white">Exactly 7 Days (Every Friday)</span>
+              <span className={`font-mono ${summary?.is_consecutive_weekly ? 'text-acid-light' : 'text-amber-300'}`}>
+                {summary?.is_consecutive_weekly ? 'Consecutive weekly dates' : 'Gaps or irregular intervals detected'}
+              </span>
             </div>
           </div>
         </BentoCard>
@@ -192,7 +232,7 @@ export const DatasetPage: React.FC = () => {
         {/* Card 3: Upload & Replacement Wizard */}
         <BentoCard
           title="Dataset Upload & Replacement"
-          subtitle="Upload compatible Walmart format CSV"
+          subtitle="Upload compatible retail sales CSV"
         >
           <div className="space-y-4">
             <p className="text-xs text-slate-400 leading-relaxed">
@@ -214,11 +254,40 @@ export const DatasetPage: React.FC = () => {
                 </span>
                 <span className="text-[10px] text-slate-500">Max 50MB UTF-8 CSV</span>
               </div>
+              {summary && (
+                <div className="rounded-xl border border-white/[0.08] bg-midnight-900/60 p-3 space-y-1.5 text-[11px]">
+                  <div className="flex justify-between gap-3"><span className="text-slate-400">Active file</span><span className="text-white text-right break-all">{summary.original_filename}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-slate-400">Storage</span><span className={summary.storage_status === 'Persistent' && summary.storage_verified ? 'text-acid-light' : 'text-amber-300'}>{summary.storage_status || 'In-memory'}{summary.storage_verified ? ' (verified)' : ''}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-slate-400">Absolute location</span><span className="text-slate-200 text-right break-all">{summary.storage_path || 'Not available'}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-slate-400">Uploaded</span><span className="text-slate-200">{summary.uploaded_at ? new Date(summary.uploaded_at).toLocaleString() : 'Bundled dataset'}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-slate-400">File size / records / stores</span><span className="text-slate-200">{summary.file_size?.toLocaleString() || '—'} bytes / {summary.total_rows.toLocaleString()} / {summary.total_stores}</span></div>
+                  <div className="flex justify-between gap-3"><span className="text-slate-400">SHA-256</span><span className="font-mono text-slate-200 text-right break-all">{summary.sha256}</span></div>
+                </div>
+              )}
+              {uploads.length > 0 && (
+                <div className="space-y-2">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400">Previously uploaded datasets</label>
+                  {uploads.map((upload) => (
+                    <div key={upload.stored_filename} className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] px-3 py-2 text-[11px]">
+                      <span className="min-w-0 text-slate-200 truncate" title={upload.original_filename}>
+                        {upload.original_filename} · {upload.total_rows.toLocaleString()} rows {upload.active ? '· Active' : ''}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {!upload.active && (
+                          <button disabled={uploading || !upload.storage_verified} onClick={() => handleActivateUpload(upload.stored_filename)} className="text-cobalt-glow disabled:opacity-40">Select</button>
+                        )}
+                        <a href={apiClient.downloadUploadedDatasetUrl(upload.stored_filename)} className="text-acid-light">Download</a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between pt-1">
               <button
                 onClick={handleReset}
+                disabled={uploading}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-[11px] font-medium text-slate-300 transition-all"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
@@ -248,8 +317,8 @@ export const DatasetPage: React.FC = () => {
                 }}
                 className="bg-transparent text-white focus:outline-none cursor-pointer text-xs"
               >
-                <option value="" className="bg-midnight-950 text-white">All Stores (1–45)</option>
-                {Array.from({ length: 45 }, (_, i) => i + 1).map((s) => (
+                <option value="" className="bg-midnight-950 text-white">All Stores ({summary?.total_stores || 0})</option>
+                {(summary?.store_ids || []).map((s) => (
                   <option key={s} value={s} className="bg-midnight-950 text-white">Store {s}</option>
                 ))}
               </select>
@@ -338,4 +407,3 @@ export const DatasetPage: React.FC = () => {
     </div>
   );
 };
-

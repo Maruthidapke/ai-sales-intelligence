@@ -23,3 +23,13 @@ Thumbs.db
 # Logs and cache
 *.log
 .pytest_cache/
+backend/uploads/
+
+# Local uploaded datasets and temporary files
+backend/uploads/
+backend/**/uploads/
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+.env

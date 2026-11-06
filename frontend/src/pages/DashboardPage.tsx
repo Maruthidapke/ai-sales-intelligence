@@ -24,32 +24,45 @@ import { MetricCard } from '../components/MetricCard';
 import { BentoCard } from '../components/BentoCard';
 import { StatusPill } from '../components/StatusPill';
 import { DatasetSummary, SalesAnalytics, BenchmarkModel, ForecastSummary } from '../types/api';
+import { useForecastScope } from '../state/ForecastScopeContext';
 
 interface DashboardPageProps {
   onNavigate: (tab: string) => void;
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
+  const { scope } = useForecastScope();
+  const selectedStore = scope.storeId;
   const [summary, setSummary] = useState<DatasetSummary | null>(null);
   const [analytics, setAnalytics] = useState<SalesAnalytics | null>(null);
   const [benchmarks, setBenchmarks] = useState<BenchmarkModel[]>([]);
-  const [forecastSum, setForecastSum] = useState<ForecastSummary | null>(null);
+  const forecastSum: ForecastSummary | null = scope.lastForecast?.summary || null;
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [sumRes, anaRes, benchRes, fcRes] = await Promise.all([
-          apiClient.getDatasetSummary(),
-          apiClient.getSalesAnalytics(),
-          apiClient.getBenchmarks(),
-          apiClient.getForecastSummary(),
+        const results = await Promise.allSettled([
+          apiClient.getDatasetSummary(selectedStore),
+          apiClient.getSalesAnalytics(selectedStore),
+          apiClient.getBenchmarks(selectedStore),
         ]);
-        setSummary(sumRes);
-        setAnalytics(anaRes);
-        setBenchmarks(benchRes);
-        setForecastSum(fcRes);
+        if (results[0].status === 'fulfilled') setSummary(results[0].value);
+        if (results[1].status === 'fulfilled') setAnalytics(results[1].value);
+        if (results[2].status === 'fulfilled') setBenchmarks(results[2].value);
+        if (results.some((result) => result.status === 'rejected')) {
+          const detail = results
+            .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+            .map((result) => result.reason?.response?.data?.detail)
+            .find((message): message is string => typeof message === 'string');
+          setLoadError(detail
+            ? `${detail} Dataset statistics and historical analytics remain available.`
+            : 'Some derived results are unavailable for the active dataset. Dataset statistics and analytics remain available where possible.');
+        } else {
+          setLoadError(null);
+        }
       } catch (err) {
         console.error('Failed to load dashboard metrics', err);
       } finally {
@@ -57,7 +70,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
       }
     };
     fetchData();
-  }, []);
+  }, [selectedStore]);
 
   if (loading) {
     return (
@@ -77,6 +90,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
 
   return (
     <div className="space-y-6">
+      {loadError && (
+        <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-200" role="status">
+          {loadError}
+        </div>
+      )}
       {/* Forecast Status Notice Banner */}
       <div className="relative overflow-hidden rounded-2xl glass-panel p-4 sm:p-5 border-l-4 border-l-acid-light bg-gradient-to-r from-acid-DEFAULT/5 via-transparent to-transparent flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start gap-3">
@@ -85,11 +103,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h4 className="text-sm font-bold text-white">Next-Week Forecast Ready: 2 November 2012</h4>
+              <h4 className="text-sm font-bold text-white">Active Dataset: {summary?.original_filename || 'Loading dataset'}</h4>
               <StatusPill status="UNOBSERVED HORIZON" size="sm" />
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Unified Random Forest model trained on 4,050 supervised historical rows. Calibrated nominal 90% empirical error bands applied across 45 stores.
+              {summary ? `${summary.total_rows.toLocaleString()} records across ${summary.total_stores} stores, with history through ${summary.max_date}. Forecast results are shown only when valid model inputs and calibration are available.` : 'Loading active dataset details.'}
             </p>
           </div>
         </div>
@@ -107,39 +125,33 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           title="Total Historical Sales"
-          value={summary ? `$${(summary.total_sales / 1e9).toFixed(2)}B` : '$6.74B'}
-          subtitle="6,435 observations across 45 stores"
+          value={summary ? `$${(summary.total_sales / 1e9).toFixed(2)}B` : '—'}
+          subtitle={`${summary?.total_rows.toLocaleString() || '—'} observations`}
           icon={DollarSign}
-          trend="+8.2% YoY"
-          trendPositive={true}
           accent="cobalt"
         />
 
         <MetricCard
           title="Active Stores"
-          value={summary ? summary.total_stores : 45}
-          subtitle="143 consecutive weeks per store"
+          value={summary ? summary.total_stores : '—'}
+          subtitle={`${summary?.weeks_per_store ?? '—'} unique weeks in active history`}
           icon={StoreIcon}
-          trend="100% Panel Complete"
-          trendPositive={true}
           accent="acid"
         />
 
         <MetricCard
           title="Mean Weekly Sales"
-          value={summary ? `$${(summary.mean_weekly_sales / 1e6).toFixed(2)}M` : '$1.05M'}
-          subtitle={`Std Dev: $${summary ? (summary.std_weekly_sales / 1e3).toFixed(0) : '564'}K`}
+          value={summary ? `$${(summary.mean_weekly_sales / 1e6).toFixed(2)}M` : '—'}
+          subtitle={`Std Dev: $${summary ? (summary.std_weekly_sales / 1e3).toFixed(0) : '—'}K`}
           icon={TrendingUp}
           accent="cobalt"
         />
 
         <MetricCard
           title="Benchmark Top Model"
-          value="Random Forest"
-          subtitle="MAE: $36,036 | WAPE: 3.51%"
+          value={benchmarks[0]?.Model || 'Unavailable'}
+          subtitle={benchmarks[0] ? `MAE: $${benchmarks[0].MAE.toLocaleString()} | WAPE: ${benchmarks[0]['WAPE (%)'].toFixed(2)}%` : 'No valid holdout metrics available'}
           icon={Sparkles}
-          trend="Lowest MAE"
-          trendPositive={true}
           accent="acid"
         />
       </div>
@@ -148,8 +160,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Sales Timeline Chart (2 Cols) */}
         <BentoCard
-          title="Aggregate Weekly Sales Timeline (2010 – 2012)"
-          subtitle="Total network weekly revenue with holiday peaks marked"
+          title={selectedStore === null ? 'Aggregate Weekly Sales Timeline' : `Store ${selectedStore} Weekly Sales Timeline`}
+          subtitle="Historical weekly revenue from the active dataset"
           className="lg:col-span-2"
           headerAction={
             <div className="flex items-center gap-2">
@@ -166,7 +178,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
           }
         >
           <div className="h-72 w-full pt-2">
-            <ResponsiveContainer width="100%" height="100%">
+            {chartData.length ? <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="cobaltGradient" x1="0" y1="0" x2="0" y2="1">
@@ -209,64 +221,63 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
                   fill="url(#cobaltGradient)"
                 />
               </AreaChart>
-            </ResponsiveContainer>
+            </ResponsiveContainer> : (
+              <div className="flex h-full items-center justify-center text-xs text-slate-400">
+                Historical sales are unavailable for the selected dataset scope.
+              </div>
+            )}
           </div>
 
           <div className="mt-4 pt-3 border-t border-white/[0.06] flex flex-wrap items-center justify-between text-xs text-slate-400 gap-2">
-            <span>Historical Period: <strong>5 Feb 2010 – 26 Oct 2012</strong></span>
-            <span>Holiday Sales Boost: <strong className="text-acid-light">+{analytics?.holiday_comparison?.sales_lift_pct?.toFixed(1) || '8.2'}%</strong></span>
-            <span>Zero Missing Cells Confirmed</span>
+            <span>Historical Period: <strong>{summary?.min_date || '—'} – {summary?.max_date || '—'}</strong></span>
+            <span>Holiday Sales Lift: <strong className="text-acid-light">{analytics?.holiday_comparison?.sales_lift_pct?.toFixed(1) || 'Unavailable'}%</strong></span>
+            <span>{summary?.missing_cells ?? '—'} Missing Cells</span>
           </div>
         </BentoCard>
 
         {/* Forecast Quick Summary & Alert Diagnostics (1 Col) */}
         <BentoCard
           title="Upcoming Forecast Glance"
-          subtitle="2 Nov 2012 | 45 Stores"
-          headerAction={<StatusPill status="45 / 45 NORMAL" size="sm" />}
+          subtitle={`${forecastSum?.forecast_date || 'No forecast generated'} | ${summary?.total_stores || 0} stores`}
+          headerAction={<StatusPill status={forecastSum ? forecastSum.model_used : 'FORECAST UNAVAILABLE'} size="sm" />}
         >
           <div className="space-y-4">
             <div className="p-4 rounded-xl bg-midnight-900 border border-white/[0.06] space-y-3">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-400">Total Projected Sales:</span>
                 <span className="text-white font-mono font-bold text-sm">
-                  ${forecastSum?.total_forecast_sales ? (forecastSum.total_forecast_sales / 1e6).toFixed(2) : '46.12'}M
+                  {forecastSum ? `$${(forecastSum.total_forecast_sales / 1e6).toFixed(2)}M` : 'Unavailable'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-400">Mean Store Forecast:</span>
                 <span className="text-white font-mono">
-                  ${forecastSum?.mean_store_forecast ? (forecastSum.mean_store_forecast / 1e3).toFixed(1) : '1,024.9'}K
+                  {forecastSum ? `$${(forecastSum.mean_store_forecast / 1e3).toFixed(1)}K` : 'Unavailable'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-400">Mean Interval Width:</span>
                 <span className="text-slate-300 font-mono">
-                  ${forecastSum?.mean_band_width ? (forecastSum.mean_band_width / 1e3).toFixed(1) : '340.9'}K
+                  {forecastSum?.mean_band_width != null ? `$${(forecastSum.mean_band_width / 1e3).toFixed(1)}K` : 'Unavailable'}
                 </span>
               </div>
               <div className="flex justify-between items-center text-xs">
                 <span className="text-slate-400">Nominal Target Coverage:</span>
-                <span className="text-acid-light font-mono font-bold">90.0%</span>
+                <span className="text-acid-light font-mono font-bold">{forecastSum?.nominal_coverage ? `${(forecastSum.nominal_coverage * 100).toFixed(0)}%` : 'Unavailable'}</span>
               </div>
             </div>
 
-            {/* Store 36 Caution Notice */}
-            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 space-y-1">
-              <div className="flex items-center gap-1.5 font-bold text-amber-300">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span>Store 36 Reliability Caution</span>
+            {forecastSum?.undercovered_stores?.length ? (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90">
+                Stores below nominal empirical coverage: {forecastSum.undercovered_stores.join(', ')}.
               </div>
-              <p className="text-[11px] leading-relaxed text-amber-200/80">
-                Store 36 observed only 78.57% empirical coverage on the 14-week holdout (below the 90% target). Treat prediction bands for Store 36 conservatively.
-              </p>
-            </div>
+            ) : null}
 
             <button
               onClick={() => onNavigate('forecast')}
               className="w-full py-2.5 px-4 rounded-xl bg-cobalt hover:bg-cobalt-light text-white text-xs font-semibold shadow-cobalt-glow transition-all duration-200 flex items-center justify-center gap-2"
             >
-              <span>Explore All 45 Store Forecasts</span>
+              <span>Explore Store Forecasts</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -275,8 +286,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
 
       {/* Model Benchmark Table Card */}
       <BentoCard
-        title="Original 14-Week Holdout Benchmark Models"
-        subtitle="Evaluated on 630 store-weeks (27 July – 26 October 2012) using chronological leakage-safe splits"
+        title="Active Dataset Chronological Model Comparison"
+        subtitle="Holdout metrics from the current uploaded dataset; requires adequate history after lag warm-up"
         headerAction={
           <button
             onClick={() => onNavigate('comparison')}
@@ -301,7 +312,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
             </thead>
             <tbody className="divide-y divide-white/[0.04]">
               {benchmarks.map((m, idx) => {
-                const isWinner = m.Model === 'Random Forest';
+                const isWinner = m.Model === benchmarks[0]?.Model;
                 return (
                   <tr
                     key={m.Model}
@@ -343,4 +354,3 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
     </div>
   );
 };
-

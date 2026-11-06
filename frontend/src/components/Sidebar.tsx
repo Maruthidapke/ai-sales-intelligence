@@ -17,7 +17,11 @@ interface SidebarProps {
   setActiveTab: (tab: string) => void;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
-  datasetSummary?: any;
+  datasetSummary?: {
+    sha256?: string;
+    total_stores?: number;
+    total_rows?: number;
+  } | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -29,11 +33,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navItems = [
     { id: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard, badge: 'Live' },
-    { id: 'dataset', label: 'Dataset Explorer', icon: Database, badge: '6.4K' },
+    { id: 'dataset', label: 'Dataset Explorer', icon: Database, badge: datasetSummary?.total_rows != null ? `${(datasetSummary.total_rows / 1000).toFixed(1)}K` : undefined },
     { id: 'analytics', label: 'Sales Analytics', icon: TrendingUp },
     { id: 'forecast', label: 'Prediction Center', icon: Sparkles, badge: 'AI' },
     { id: 'comparison', label: 'Model Comparison', icon: BarChart2 },
-    { id: 'diagnostics', label: 'Reliability & Insights', icon: ShieldCheck, badge: '98.9%' },
+    { id: 'diagnostics', label: 'Reliability & Insights', icon: ShieldCheck },
     { id: 'reports', label: 'Reports & Exports', icon: FileDown },
     { id: 'settings', label: 'Settings & About', icon: Settings },
   ];
@@ -122,14 +126,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="rounded-xl glass-panel p-3.5 space-y-2 border border-white/[0.05]">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Dataset SHA-256</span>
-              <span className="w-2 h-2 rounded-full bg-acid-light animate-ping" />
+              <span className={`w-2 h-2 rounded-full ${datasetSummary?.sha256 ? 'bg-acid-light animate-ping' : 'bg-slate-500'}`} />
             </div>
             <div className="font-mono text-[10px] text-slate-300 truncate bg-black/40 px-2 py-1 rounded border border-white/5">
-              {datasetSummary?.sha256 ? `${datasetSummary.sha256.substring(0, 18)}...` : '0846b6941217dd...'}
+              {datasetSummary?.sha256 ? `${datasetSummary.sha256.substring(0, 18)}...` : 'Unavailable'}
             </div>
             <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
-              <span>Stores: <strong className="text-white font-mono">{datasetSummary?.total_stores || 45}</strong></span>
-              <span>Records: <strong className="text-white font-mono">{datasetSummary?.total_rows ? datasetSummary.total_rows.toLocaleString() : '6,435'}</strong></span>
+              <span>Stores: <strong className="text-white font-mono">{datasetSummary?.total_stores ?? '—'}</strong></span>
+              <span>Records: <strong className="text-white font-mono">{datasetSummary?.total_rows?.toLocaleString() ?? '—'}</strong></span>
             </div>
           </div>
         </div>
@@ -137,4 +141,3 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 };
-

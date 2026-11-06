@@ -24,6 +24,35 @@ export interface DatasetSummary {
   };
   missing_cells: number;
   duplicate_rows: number;
+  original_filename?: string;
+  stored_filename?: string;
+  uploaded_at?: string | null;
+  file_size?: number;
+  storage_path?: string;
+  storage_status?: 'Persistent' | 'In-memory';
+  storage_verified?: boolean;
+  columns?: string[];
+}
+
+export interface UploadedDataset extends DatasetSummary {
+  original_filename: string;
+  stored_filename: string;
+  uploaded_at: string;
+  file_size: number;
+  storage_path: string;
+  storage_status: 'Persistent' | 'In-memory';
+  storage_verified: boolean;
+  active: boolean;
+}
+
+export interface ForecastTargetDate {
+  today: string;
+  default_target_date: string;
+  timezone: string;
+  latest_historical_date: string;
+  max_horizon_weeks: number;
+  mode: 'future' | 'historical';
+  minimum_target_date: string;
 }
 
 export interface DatasetRow {
@@ -56,7 +85,7 @@ export interface SalesAnalytics {
   holiday_comparison: {
     Holiday?: HolidayStats;
     'Non-Holiday'?: HolidayStats;
-    sales_lift_pct: number;
+    sales_lift_pct: number | null;
   };
   monthly_seasonality: {
     month: string;
@@ -98,6 +127,11 @@ export interface BenchmarkModel {
   RMSE: number;
   'WAPE (%)': number;
   R2: number;
+  Training_Start?: string;
+  Training_End?: string;
+  Testing_Start?: string;
+  Testing_End?: string;
+  Evaluated_Records?: number;
 }
 
 export interface BacktestModel {
@@ -105,17 +139,53 @@ export interface BacktestModel {
   'Pooled MAE (USD)': number;
   'Pooled RMSE (USD)': number;
   'WAPE (%)': number;
+  Evaluated_Records?: number;
+  Folds?: {
+    fold: number;
+    train_end: string;
+    test_start: string;
+    test_end: string;
+    records: number;
+  }[];
+}
+
+export interface ModelStability {
+  model_a: string;
+  model_b: string;
+  mean_mae_difference_usd: number;
+  mae_difference_std_usd: number;
+  mean_rf_rmse_usd: number;
+  mean_gb_rmse_usd: number;
+  mean_rf_wape_pct: number;
+  mean_gb_wape_pct: number;
+  rf_week_wins: number;
+  gb_week_wins: number;
+  total_test_weeks: number;
+  evaluated_folds: number;
+  folds: {
+    fold: number;
+    train_end: string;
+    test_start: string;
+    test_end: string;
+    test_weeks: number;
+    records: number;
+    mae_difference_usd: number;
+    [key: string]: number | string;
+  }[];
+  bootstrap_2fold_block_95_ci: [number, number];
+  includes_zero: boolean;
+  conclusion: string;
 }
 
 export interface StoreForecast {
   Store: number;
   Forecast_Date: string;
   Forecast_Sales: number;
-  Lower_Bound: number;
-  Upper_Bound: number;
-  Prior_13W_Mean: number;
-  Change_vs_Mean_Pct: number;
-  Alert: 'NORMAL' | 'HIGH' | 'LOW';
+  Lower_Bound: number | null;
+  Upper_Bound: number | null;
+  Prior_13W_Mean: number | null;
+  Change_vs_Mean_Pct: number | null;
+  Alert: 'NORMAL' | 'HIGH' | 'LOW' | 'UNAVAILABLE';
   Band_Caution: string;
   Status: string;
 }
@@ -125,20 +195,32 @@ export interface ForecastSummary {
   total_forecast_sales: number;
   mean_store_forecast: number;
   alert_counts: Record<string, number>;
-  undercovered_stores: number[];
-  alert_thresholds: {
+  undercovered_stores?: number[];
+  alert_thresholds?: {
     low_pct: number;
     high_pct: number;
   };
-  mean_band_width: number;
-  nominal_coverage: number;
+  mean_band_width: number | null;
+  nominal_coverage?: number;
   model_used: string;
+  stores_forecasted?: number;
+}
+
+export interface ForecastGenerationResponse {
+  success: boolean;
+  model_selected: string;
+  store_id: number | null;
+  stores_forecasted: number;
+  forecast_date: string | null;
+  horizon_weeks: number;
+  summary: ForecastSummary;
+  forecasts: StoreForecast[];
 }
 
 export interface StoreCoverageItem {
   store: number;
   coverage: number;
-  legacy_coverage: number;
+  legacy_coverage: number | null;
 }
 
 export interface DiagnosticsData {
@@ -147,8 +229,10 @@ export interface DiagnosticsData {
       workflow: string;
       overall_coverage: number;
       mean_width_usd: number;
-      store14_coverage: number;
-      store36_coverage: number;
+      store14_coverage: number | null;
+      store36_coverage: number | null;
+      evaluated_records?: number;
+      calibration_records?: number;
     }[];
     nominal_target: number;
     undercovered_stores: number[];
@@ -160,8 +244,11 @@ export interface DiagnosticsData {
     models: {
       model: string;
       all_fold_mae_change_pct: number;
-      first_fold_share_pct: number;
-      later_fold_mean_change_pct: number;
+      first_fold_share_pct: number | null;
+      later_fold_mean_change_pct: number | null;
+      evaluated_records?: number;
+      full_feature_mae?: number;
+      reduced_feature_mae?: number;
     }[];
     key_insight: string;
   };
@@ -180,6 +267,16 @@ export interface DiagnosticsData {
     }[];
     trade_off_explanation: string;
   };
+}
+
+export interface LeakageAudit {
+  passed: number;
+  failed: number;
+  total: number;
+  checks: { name: string; passed: boolean; details: string }[];
+  training: { start_date: string | null; end_date: string | null; records: number };
+  test: { start_date: string | null; end_date: string | null; records: number };
+  features: string[];
 }
 
 export interface ResidualsAnalysis {

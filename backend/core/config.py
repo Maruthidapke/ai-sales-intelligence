@@ -1,4 +1,5 @@
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import pandas as pd
 
 # Paths
@@ -6,6 +7,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_PATH = BASE_DIR / "data" / "Walmart.csv"
 CACHE_DIR = BASE_DIR / "backend" / "reports_cache"
 MODELS_DIR = BASE_DIR / "backend" / "reports_cache" / "saved_models"
+UPLOADS_DIR = BASE_DIR / "backend" / "uploads"
+ACTIVE_DATASET_PATH = UPLOADS_DIR / "active_dataset.json"
+FORECAST_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 # Dataset Specs
 REQUIRED_COLUMNS = [
@@ -56,23 +60,6 @@ BACKTEST_PERIODS = [
     ("2012 spring/summer", "2012-04-06", "2012-07-20"),
 ]
 
-# Verified baseline and ML reference parameters from original notebook
+# Production model configuration; evaluation metrics are calculated from active data at runtime.
 PRODUCTION_MODEL_NAME = "Random Forest"
 PRODUCTION_PARAMETERS = {"max_depth": None, "min_samples_leaf": 1}
-
-ORIGINAL_BENCHMARK_REFERENCE = {
-    "Random Forest": {"CV_MAE": 52631.9084, "MAE": 36036.4789, "RMSE": 56558.7285, "WAPE (%)": 3.5146, "R2": 0.9884},
-    "Gradient Boosting": {"CV_MAE": 56038.3907, "MAE": 36167.7386, "RMSE": 53824.5267, "WAPE (%)": 3.5274, "R2": 0.9895},
-    "XGBoost": {"CV_MAE": 57506.6532, "MAE": 40119.7451, "RMSE": 59765.7990, "WAPE (%)": 3.9129, "R2": 0.9871},
-    "Last-week baseline": {"CV_MAE": 86249.1302, "MAE": 48895.6173, "RMSE": 73367.2597, "WAPE (%)": 4.7688, "R2": 0.9805},
-    "Seasonal baseline": {"CV_MAE": 60992.0743, "MAE": 52325.3587, "RMSE": 83959.1230, "WAPE (%)": 5.1033, "R2": 0.9745},
-}
-
-NESTED_BACKTEST_REFERENCE = [
-    {"Model": "Seasonal baseline", "Pooled MAE (USD)": 61207.48, "Pooled RMSE (USD)": 88498.27, "WAPE (%)": 5.74},
-    {"Model": "Random Forest", "Pooled MAE (USD)": 69422.13, "Pooled RMSE (USD)": 141344.31, "WAPE (%)": 6.52},
-    {"Model": "Gradient Boosting", "Pooled MAE (USD)": 70489.50, "Pooled RMSE (USD)": 137922.15, "WAPE (%)": 6.62},
-    {"Model": "XGBoost", "Pooled MAE (USD)": 74863.54, "Pooled RMSE (USD)": 147567.81, "WAPE (%)": 7.03},
-    {"Model": "Last-week baseline", "Pooled MAE (USD)": 98545.96, "Pooled RMSE (USD)": 191208.72, "WAPE (%)": 9.25},
-]
-

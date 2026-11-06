@@ -28,7 +28,7 @@ AI_for_businesse/
 │   │   ├── routes_forecast.py      # Store-level live predictions & parameters
 │   │   └── routes_reports.py       # PDF & CSV download endpoints
 │   └── tests/
-│       ├── test_backend.py         # Unit & integration test suite (100% pass)
+│       ├── test_backend.py         # Backend unit and integration test suite
 │       └── probe_server.py         # Live end-to-end socket & API probe
 │
 ├── frontend/
@@ -61,39 +61,19 @@ AI_for_businesse/
 
 ---
 
-## 2. Core Machine Learning & Statistical Findings
+## 2. Active-Data Evaluation and Forecasting
 
-### A. Original 14-Week Holdout Benchmark (27 July – 26 October 2012)
-| Model | MAE (USD) | RMSE (USD) | WAPE (%) | R² Score | Key Empirical Finding |
-|---|---:|---:|---:|---:|---|
-| **Random Forest** | **$36,036.48** | $56,558.73 | **3.51%** | 0.9884 | Lowest holdout MAE and WAPE |
-| **Gradient Boosting** | $36,167.74 | **$53,824.53** | 3.53% | **0.9895** | Lowest holdout RMSE (penalizes large misses) |
-| **XGBoost** | $40,119.75 | $59,765.80 | 3.91% | 0.9871 | Regularized CPU gradient-boosted trees |
-| **Last-Week Baseline** | $48,895.62 | $73,367.26 | 4.77% | 0.9805 | Lag 1 persistence |
-| **Seasonal Baseline** | $52,325.36 | $83,959.12 | 5.10% | 0.9745 | Lag 52 persistence |
+Uploaded CSV files are persisted under `backend/uploads/` as UUID-named originals, with JSON metadata sidecars. `backend/uploads/active_dataset.json` records the active upload; the backend verifies the referenced file before marking it **Persistent** and reloads it on startup.
 
-### B. Four-Period Chronological Nested Backtesting
-| Model | Pooled MAE (USD) | Pooled RMSE (USD) | WAPE (%) | Key Empirical Finding |
-|---|---:|---:|---:|---|
-| **Seasonal Baseline** | **$61,207.48** | **$88,498.27** | **5.74%** | **Wins pooled nested backtesting** |
-| **Random Forest** | $69,422.13 | $141,344.31 | 6.52% | Strong non-holiday performance |
-| **Gradient Boosting** | $70,489.50 | $137,922.15 | 6.62% | Close second in backtests |
-| **XGBoost** | $74,863.54 | $147,567.81 | 7.03% | Stable across outer folds |
-| **Last-Week Baseline** | $98,545.96 | $191,208.72 | 9.25% | Prone to trend lag error |
+Model benchmarks, chronological backtests, reliability, warning utility, and paired stability results are calculated at runtime from the currently active dataset and selected store scope. The historical benchmark numbers from prior versions are intentionally not repeated here as current results.
 
-> **Critical Retail Conclusion**: Machine Learning is not universally superior to traditional baselines. In nested backtesting across full annual cycles, the simple Seasonal Baseline (Lag 52) wins pooled MAE.
+The supervised machine-learning feature set includes lags through 53 weeks. A dataset with only 10 weeks per store therefore has **zero complete supervised rows**; this is the expected warm-up requirement, not a feature-generation failure. Random Forest, Gradient Boosting, or XGBoost must report insufficient history in that case. The one-week Last-Week baseline remains available when each selected store has a valid latest observation. Forecast intervals, 13-week comparisons, and alerts are shown only when their required history/calibration exists.
 
-### C. Forecast Reliability & Store 36 Caution
-- **Aggregate Holdout Coverage**: **98.89%** with a mean prediction band width of **$340,857.45**.
-- **Individual Failure Retained**: Store 36 achieved only **78.57% empirical coverage** on the holdout (below the nominal 90% target).
-- **Caveat**: Aggregate coverage does not guarantee safety for every store.
+Prediction Center offers two date modes:
+- **Future Forecast**: a cadence-aligned target after today, limited to 52 weeks beyond the latest observation. Old data requires a newer upload.
+- **Historical Next-Week Evaluation**: forecasts the next week after the latest observation, useful for explicitly evaluating archived datasets.
 
-### D. Warning Utility Matrix
-| Warning Rule | Alerts | Material Moves | Precision (%) | Recall (%) | False Alarms | Missed Moves |
-|---|---:|---:|---:|---:|---:|---:|
-| **Always NORMAL** | 0 | 396 | N/A | 0.00% | 0 | 396 |
-| **Fixed ±15%** | 181 | 396 | 84.53% | 38.64% | 28 | 243 |
-| **Origin Quantiles** | 97 | 396 | **91.75%** | 22.47% | **8** | 307 |
+Both modes use actual observations; multi-week supported model forecasts are recursive. The Last-Week baseline is deliberately limited to one week.
 
 ---
 
@@ -107,7 +87,6 @@ AI_for_businesse/
 ```powershell
 # From the project root
 pip install -r requirements.txt
-pip install fastapi uvicorn reportlab
 ```
 
 ### Step 2: Build the Frontend (Pre-built in `frontend/dist`)
@@ -150,11 +129,12 @@ Execute the complete backend test suite:
 ```powershell
 python -m pytest backend/tests/test_backend.py -v
 ```
-All 6 tests verify:
+The backend tests verify:
 - Dataset integrity & SHA-256 fingerprint matching
 - Feature engineering without look-ahead leakage
 - Metric calculations (MAE, RMSE, WAPE, R²)
-- Forecast generation for 2 November 2012
+- Persistent upload, restart reload, and baseline forecasts on a small dataset
+- Model/forecast behavior against the active dataset
 - ReportLab executive PDF generation & CSV export
 - API endpoints response format and status codes
 
@@ -165,16 +145,21 @@ All 6 tests verify:
 - `GET /api/health`: Health status and system readiness.
 - `GET /api/dataset/summary`: Dataset integrity, dimensions, statistics, and SHA-256 checksum.
 - `GET /api/dataset/preview`: Paginated records with store and date filters.
-- `POST /api/dataset/upload`: Upload and validate a new compatible CSV dataset.
+- `POST /api/dataset/upload`: Validate and persist a new compatible CSV dataset.
+- `GET /api/dataset/uploads`: List saved uploads and their storage metadata.
+- `POST /api/dataset/uploads/{stored_filename}/activate`: Select a previously uploaded dataset.
+- `GET /api/dataset/uploads/{stored_filename}/download`: Download an uploaded source CSV.
 - `POST /api/dataset/reset`: Reset active dataset to canonical Walmart.csv.
 - `GET /api/analytics/sales`: Weekly aggregate timeline, holiday comparisons, and monthly seasonality.
 - `GET /api/analytics/stores`: Store performance rankings (top/bottom performers).
-- `GET /api/models/benchmarks`: Original 14-week holdout benchmark table.
-- `GET /api/models/backtest`: Four-period nested backtest results.
-- `GET /api/models/stability`: Paired RF vs GB stability analysis and bootstrap confidence intervals.
-- `GET /api/models/diagnostics`: Store-level coverage array, feature ablation, and alert utility.
-- `GET /api/forecast/summary`: 1-week-ahead forecast metadata (Date: 2012-11-02).
+- `GET /api/models/benchmarks?store_id={id}`: Chronological holdout comparison from active data (all stores when omitted).
+- `GET /api/models/backtest?store_id={id}`: Expanding-window chronological backtest from active data.
+- `GET /api/models/stability?store_id={id}`: Paired RF/GB expanding-window results and block-bootstrap interval.
+- `GET /api/models/diagnostics?store_id={id}`: Scope-specific interval coverage, feature ablation, and warning utility.
+- `GET /api/models/leakage-audit?store_id={id}`: Runtime chronological, past-only feature, and preprocessing checks.
+- `GET /api/forecast/target-date?mode=future|historical`: Current local date, active history, and cadence-aligned target.
+- `GET /api/forecast/summary`: Calibrated 1-week-ahead forecast metadata when sufficient history exists.
 - `GET /api/forecast/stores`: Store-level point predictions, 90% bounds, and alert flags.
-- `POST /api/forecast/generate`: Interactive forecast generation endpoint.
-- `GET /api/reports/pdf`: Stream and download executive analytics PDF report.
-- `GET /api/reports/csv`: Stream and download store forecasts CSV.
+- `POST /api/forecast/generate`: Generate an active-data forecast with `store_id`, `model_name`, `forecast_date` (`YYYY-MM-DD`), and `date_mode` (`future` or `historical`); supported model horizons are limited to 52 weeks.
+- `GET /api/reports/pdf`: Download a valid PDF using optional `store_id`, `model_name`, `forecast_date`, and `date_mode`; a dataset-only report is returned when that forecast cannot be supported.
+- `GET /api/reports/csv`: Download a CSV for the requested scope/model/date when a supported forecast is available.

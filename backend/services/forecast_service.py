@@ -19,7 +19,7 @@ class ForecastService:
     _alert_high: float = 24.17
     _cached_forecasts: Optional[pd.DataFrame] = None
     _forecast_date: Optional[pd.Timestamp] = None
-    _undercovered_stores: List[int] = [36]
+    _undercovered_stores: List[int] = []
     _recent_actual_vs_pred: Optional[pd.DataFrame] = None
 
     @classmethod
@@ -30,7 +30,7 @@ class ForecastService:
         cls._deployment_model = None
         cls._cached_forecasts = None
         cls._forecast_date = None
-        cls._undercovered_stores = [36]
+        cls._undercovered_stores = []
         cls._recent_actual_vs_pred = None
 
     @classmethod
@@ -88,16 +88,28 @@ class ForecastService:
             ALERT_CONFIG["lower_quantile"], ALERT_CONFIG["upper_quantile"]
         ]).to_numpy()
 
-        # Fit deployment model on all supervised data
-        cls._deployment_model = pipeline_for(
-            clone(get_base_estimators()[PRODUCTION_MODEL_NAME]).set_params(**PRODUCTION_PARAMETERS)
-        )
-        cls._deployment_model.fit(supervised_df[ALL_FEATURES], supervised_df["Weekly_Sales"])
+        # Keep the calibrated model frozen so its calibration residuals remain applicable.
+        cls._deployment_model = calib_train_model
 
-        # Retain recent holdout predictions for actual vs predicted visualization
+        # Evaluate the later holdout with that same model; never fit it on holdout targets.
         recent_eval = test_df[["Store", "Date", "Weekly_Sales"]].copy()
         recent_eval["Prediction"] = cls._deployment_model.predict(test_df[ALL_FEATURES])
         cls._recent_actual_vs_pred = recent_eval
+        holdout_scales = np.maximum(test_df["rolling_mean_13"].to_numpy(dtype=float), 1.0)
+        holdout_q = test_df["Store"].map(cls._store_interval_q).fillna(cls._global_interval_q).to_numpy(dtype=float)
+        holdout_lower = np.maximum(0.0, recent_eval["Prediction"].to_numpy(dtype=float) - holdout_q * holdout_scales)
+        holdout_upper = recent_eval["Prediction"].to_numpy(dtype=float) + holdout_q * holdout_scales
+        covered = (
+            (test_df["Weekly_Sales"].to_numpy(dtype=float) >= holdout_lower)
+            & (test_df["Weekly_Sales"].to_numpy(dtype=float) <= holdout_upper)
+        )
+        coverage_by_store = pd.DataFrame({
+            "Store": test_df["Store"].to_numpy(),
+            "covered": covered,
+        }).groupby("Store")["covered"].mean()
+        cls._undercovered_stores = [
+            int(store) for store, coverage in coverage_by_store.items() if coverage < NOMINAL_COVERAGE
+        ]
 
         # Construct next-week future features
         max_date = raw_df["Date"].max()
@@ -139,8 +151,10 @@ class ForecastService:
             "Change_vs_Mean_Pct": deviations,
             "Alert": alerts,
             "Band_Caution": [
-                "BELOW NOMINAL in reviewed store holdout (78.57%)" if s in cls._undercovered_stores
-                else "Evaluated outcome; empirical residual band" for s in future_feats["Store"]
+                f"BELOW NOMINAL coverage on holdout ({NOMINAL_COVERAGE:.0%} target)"
+                if s in cls._undercovered_stores
+                else "Empirical residual interval; holdout coverage reviewed"
+                for s in future_feats["Store"]
             ],
             "Status": "MODEL FORECAST — actual unobserved"
         })
@@ -178,66 +192,192 @@ class ForecastService:
         }
 
     @classmethod
-    def generate_forecast_with_model(cls, raw_df: pd.DataFrame, model_name: str = "Random Forest", store_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Generates forecast using user-specified model family."""
-        cls.calibrate_and_fit(raw_df)
-        supervised_df = prepare_supervised_data(raw_df)
+    def generate_forecast_with_model(
+        cls,
+        raw_df: pd.DataFrame,
+        model_name: str = "Random Forest",
+        store_id: Optional[int] = None,
+        forecast_date: Optional[pd.Timestamp] = None,
+    ) -> List[Dict[str, Any]]:
+        """Generates recursive weekly forecasts without substituting unavailable models."""
+        supported = {
+            "Random Forest", "Gradient Boosting", "XGBoost",
+            "Last-week baseline", "Seasonal baseline",
+        }
+        if model_name not in supported:
+            raise ValueError(f"Unsupported forecasting model: {model_name}")
+        if raw_df.empty or raw_df["Date"].isna().any():
+            raise ValueError("A valid dataset with parsed dates is required to forecast.")
 
-        max_date = raw_df["Date"].max()
-        fc_date = max_date + pd.Timedelta(weeks=1)
+        latest_date = pd.Timestamp(raw_df["Date"].max()).normalize()
+        fc_date = pd.Timestamp(forecast_date).normalize() if forecast_date is not None else latest_date + pd.Timedelta(weeks=1)
+        if fc_date <= latest_date:
+            raise ValueError(f"Forecast date must be after the latest historical date ({latest_date:%Y-%m-%d}).")
+        delta_days = (fc_date - latest_date).days
+        if delta_days % 7:
+            raise ValueError(
+                f"Forecast date must align with the weekly data cadence; choose a date in 7-day increments after {latest_date:%Y-%m-%d}."
+            )
+        horizon = delta_days // 7
+        if horizon > 52:
+            raise ValueError(
+                f"The requested date is {horizon} weeks beyond the latest historical data. "
+                "Forecast horizons are limited to 52 weeks; choose a nearer date or upload newer history."
+            )
+        if model_name == "Last-week baseline" and horizon != 1:
+            raise ValueError(
+                "Last-week baseline supports a one-week forecast only. For longer horizons, select a trained model or Seasonal baseline with 52 weeks of history."
+            )
 
-        store_list = sorted(raw_df["Store"].unique()) if store_id is None else [store_id]
-        future_rows = pd.DataFrame({
-            "Store": store_list,
-            "Date": fc_date,
-            "Weekly_Sales": np.nan
-        })
-        future_frame = pd.concat([raw_df[["Store", "Date", "Weekly_Sales"]], future_rows], ignore_index=True)
-        future_feats = make_features(future_frame)
-        future_feats = future_feats.loc[future_feats["Date"] == fc_date].sort_values("Store").reset_index(drop=True)
+        store_list = sorted(int(store) for store in raw_df["Store"].unique())
+        if store_id is not None:
+            if store_id not in store_list:
+                raise ValueError(f"Store {store_id} is not present in the active dataset.")
+            store_list = [store_id]
+        history_lengths = raw_df.groupby("Store")["Weekly_Sales"].count()
+        for store in store_list:
+            required_history = (
+                52 if model_name == "Seasonal baseline"
+                else 1 if model_name == "Last-week baseline"
+                else 2
+            )
+            if int(history_lengths.get(store, 0)) < required_history:
+                raise ValueError(
+                    f"{model_name} requires at least {required_history} historical weeks "
+                    f"for Store {store}; only {int(history_lengths.get(store, 0))} are available."
+                )
+            store_dates = pd.DatetimeIndex(
+                raw_df.loc[raw_df["Store"] == store, "Date"].sort_values()
+            )
+            if store_dates.max().normalize() != latest_date:
+                raise ValueError(
+                    f"Store {store} has no observation on the latest dataset date "
+                    f"({latest_date:%Y-%m-%d}); aligned store histories are required."
+                )
+            if len(store_dates) > 1 and not store_dates.to_series().diff().dropna().eq(pd.Timedelta(weeks=1)).all():
+                raise ValueError(f"Store {store} does not have consecutive weekly history; a weekly forecast cannot be generated.")
 
-        if model_name == "Last-week baseline":
-            centers = future_feats["sales_lag_1"].to_numpy()
-        elif model_name == "Seasonal baseline":
-            centers = future_feats["sales_lag_52"].fillna(future_feats["sales_lag_1"]).to_numpy()
-        else:
-            base_ests = get_base_estimators()
-            est_key = model_name if model_name in base_ests else PRODUCTION_MODEL_NAME
-            model = pipeline_for(clone(base_ests[est_key]))
-            model.fit(supervised_df[ALL_FEATURES], supervised_df["Weekly_Sales"])
-            centers = model.predict(future_feats[ALL_FEATURES])
+        feature_df = prepare_supervised_data(raw_df)
+        model = None
+        if model_name in {"Random Forest", "Gradient Boosting", "XGBoost"}:
+            missing_stores = [
+                store for store in store_list
+                if int((feature_df["Store"] == store).sum()) == 0
+            ]
+            if len(feature_df) < 50 or missing_stores:
+                raise ValueError(
+                    f"{model_name} needs at least 50 supervised records and 54 weekly "
+                    "observations per forecasted store. The active dataset provides "
+                    f"{len(feature_df)} supervised records; insufficient history for "
+                    f"stores: {missing_stores or store_list}."
+                )
+            estimators = get_base_estimators()
+            if model_name not in estimators:
+                raise ValueError(f"{model_name} is unavailable because its optional dependency is not installed.")
+            use_calibrated_model = (
+                model_name == PRODUCTION_MODEL_NAME
+                and horizon == 1
+                and feature_df["Date"].nunique() >= 20
+            )
+            if use_calibrated_model:
+                if not cls._calibration_done:
+                    cls.calibrate_and_fit(raw_df)
+                model = cls._deployment_model
+                if model is None:
+                    raise ValueError("The calibrated production model could not be loaded.")
+            else:
+                model = pipeline_for(clone(estimators[model_name]))
+                model.fit(feature_df[ALL_FEATURES], feature_df["Weekly_Sales"])
 
-        q_vals = future_feats["Store"].map(cls._store_interval_q).fillna(cls._global_interval_q or 0.15).to_numpy()
-        scales = np.where(future_feats["rolling_mean_13"].to_numpy() > 0, future_feats["rolling_mean_13"].to_numpy(), centers)
+        working_history = raw_df[["Store", "Date", "Weekly_Sales"]].copy()
+        last_predictions: Dict[int, Dict[str, float]] = {}
+        for step in range(1, horizon + 1):
+            step_date = fc_date if step == horizon else latest_date + pd.Timedelta(weeks=step)
+            future_rows = pd.DataFrame({
+                "Store": store_list,
+                "Date": step_date,
+                "Weekly_Sales": np.nan,
+            })
+            future_features = make_features(
+                pd.concat([working_history, future_rows], ignore_index=True)
+            )
+            future_features = future_features.loc[
+                (future_features["Date"] == step_date)
+                & future_features["Store"].isin(store_list)
+            ].sort_values("Store").reset_index(drop=True)
 
-        lowers = np.maximum(0.0, centers - q_vals * scales)
-        uppers = centers + q_vals * scales
-        recent_means = np.where(future_feats["rolling_mean_13"].to_numpy() > 0, future_feats["rolling_mean_13"].to_numpy(), centers)
-        deviations = (centers / recent_means - 1) * 100
+            if model_name == "Last-week baseline":
+                centers = future_features["sales_lag_1"].to_numpy(dtype=float)
+            elif model_name == "Seasonal baseline":
+                centers = future_features["sales_lag_52"].to_numpy(dtype=float)
+            else:
+                if model is None:
+                    raise ValueError(f"{model_name} was not initialized.")
+                centers = model.predict(future_features[ALL_FEATURES])
 
-        alerts = np.select(
-            [deviations <= cls._alert_low, deviations >= cls._alert_high],
-            ["LOW", "HIGH"],
-            default="NORMAL"
+            if len(centers) != len(store_list) or not np.isfinite(centers).all():
+                raise ValueError("Forecast model produced missing or non-finite predictions.")
+            centers = np.maximum(centers.astype(float), 0.0)
+            for store, center in zip(future_features["Store"], centers):
+                last_predictions[int(store)] = {
+                    "forecast": float(center),
+                    "prior_mean": float(future_features.loc[future_features["Store"] == store, "rolling_mean_13"].iloc[0])
+                    if pd.notna(future_features.loc[future_features["Store"] == store, "rolling_mean_13"].iloc[0])
+                    else None,
+                }
+            working_history = pd.concat([
+                working_history,
+                pd.DataFrame({
+                    "Store": future_features["Store"].astype(int),
+                    "Date": step_date,
+                    "Weekly_Sales": centers,
+                }),
+            ], ignore_index=True)
+
+        output = []
+        calibrated = (
+            model_name == PRODUCTION_MODEL_NAME
+            and horizon == 1
+            and cls._global_interval_q is not None
+            and cls._store_interval_q is not None
         )
-
-        out_df = pd.DataFrame({
-            "Store": future_feats["Store"].astype(int),
-            "Forecast_Date": fc_date.strftime("%Y-%m-%d"),
-            "Forecast_Sales": centers,
-            "Lower_Bound": lowers,
-            "Upper_Bound": uppers,
-            "Prior_13W_Mean": recent_means,
-            "Change_vs_Mean_Pct": deviations,
-            "Alert": alerts,
-            "Band_Caution": [
-                "BELOW NOMINAL in reviewed store holdout (78.57%)" if s in cls._undercovered_stores
-                else "Only 14 reviewed outcomes; no per-store guarantee" for s in future_feats["Store"]
-            ],
-            "Status": f"MODEL FORECAST ({model_name})"
-        })
-
-        return out_df.to_dict(orient="records")
+        if calibrated:
+            assert cls._global_interval_q is not None and cls._store_interval_q is not None
+        for store in store_list:
+            values = last_predictions[store]
+            center = values["forecast"]
+            scale = values["prior_mean"] if values["prior_mean"] is not None and values["prior_mean"] > 0 else None
+            q = (
+                float(cls._store_interval_q.get(store, cls._global_interval_q))
+                if calibrated else None
+            )
+            lower = max(0.0, center - q * scale) if q is not None else None
+            upper = center + q * scale if q is not None else None
+            deviation = (center / scale - 1) * 100 if scale else None
+            alert = (
+                "LOW" if deviation <= cls._alert_low else
+                "HIGH" if deviation >= cls._alert_high else "NORMAL"
+            ) if deviation is not None and cls._calibration_done else "UNAVAILABLE"
+            output.append({
+                "Store": store,
+                "Forecast_Date": fc_date.strftime("%Y-%m-%d"),
+                "Forecast_Sales": center,
+                "Lower_Bound": lower,
+                "Upper_Bound": upper,
+                "Prior_13W_Mean": float(scale) if scale is not None else None,
+                "Change_vs_Mean_Pct": float(deviation) if deviation is not None else None,
+                "Alert": alert,
+                "Band_Caution": (
+                    (
+                        "BELOW NOMINAL coverage on holdout"
+                        if store in cls._undercovered_stores
+                        else "Empirical residual interval; not a per-store guarantee"
+                    )
+                    if calibrated else "Prediction interval unavailable: no valid model-specific calibration"
+                ),
+                "Status": f"MODEL FORECAST ({model_name}); horizon {horizon} week(s)",
+            })
+        return output
 
     @classmethod
     def get_actual_vs_predicted_history(cls, raw_df: pd.DataFrame, store_id: Optional[int] = None) -> List[Dict[str, Any]]:

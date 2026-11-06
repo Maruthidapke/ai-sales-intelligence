@@ -26,25 +26,37 @@ import { apiClient } from '../api/client';
 import { BentoCard } from '../components/BentoCard';
 import { MetricCard } from '../components/MetricCard';
 import { SalesAnalytics, StoreRanking } from '../types/api';
+import { useForecastScope } from '../state/ForecastScopeContext';
 
 export const AnalyticsPage: React.FC = () => {
-  const [selectedStore, setSelectedStore] = useState<number | null>(null);
+  const { scope, setScope } = useForecastScope();
+  const selectedStore = scope.storeId;
   const [analytics, setAnalytics] = useState<SalesAnalytics | null>(null);
   const [rankings, setRankings] = useState<{ all_stores: StoreRanking[]; top_stores: StoreRanking[]; bottom_stores: StoreRanking[] } | null>(null);
+  const [storeIds, setStoreIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [anaRes, rankRes] = await Promise.all([
+        setAnalytics(null);
+        setRankings(null);
+        setLoadError(null);
+        const [anaRes, rankRes, dataset] = await Promise.all([
           apiClient.getSalesAnalytics(selectedStore),
           apiClient.getStoreRankings(),
+          apiClient.getDatasetSummary(),
         ]);
         setAnalytics(anaRes);
         setRankings(rankRes);
+        setStoreIds(dataset.store_ids);
+        setLoadError(null);
       } catch (err) {
         console.error(err);
+        const detail = (err as any)?.response?.data?.detail;
+        setLoadError(typeof detail === 'string' ? detail : 'Sales analytics could not be loaded for the active dataset.');
       } finally {
         setLoading(false);
       }
@@ -79,7 +91,7 @@ export const AnalyticsPage: React.FC = () => {
             Retail Sales Performance & Seasonality Telemetry
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Slicing historical behavior across 143 consecutive observations per store
+            Slicing historical behavior across {analytics?.timeline.length || 0} observed weekly dates
           </p>
         </div>
 
@@ -87,22 +99,31 @@ export const AnalyticsPage: React.FC = () => {
           <span className="text-xs text-slate-400">Store Filter:</span>
           <select
             value={selectedStore === null ? '' : selectedStore}
-            onChange={(e) => setSelectedStore(e.target.value ? Number(e.target.value) : null)}
+            onChange={(e) => setScope((current) => ({
+              ...current,
+              storeId: e.target.value ? Number(e.target.value) : null,
+              lastForecast: null,
+            }))}
             className="bg-midnight-900 border border-white/[0.1] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none cursor-pointer"
           >
-            <option value="">Aggregate All Stores (1–45)</option>
-            {Array.from({ length: 45 }, (_, i) => i + 1).map((s) => (
+            <option value="">Aggregate All Stores ({storeIds.length})</option>
+            {storeIds.map((s) => (
               <option key={s} value={s}>Store {s}</option>
             ))}
           </select>
         </div>
       </div>
+      {loadError && (
+        <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-200" role="alert">
+          {loadError}
+        </div>
+      )}
 
       {/* KPI Row */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <MetricCard
           title="Holiday Mean Weekly Sales"
-          value={`$${analytics?.holiday_comparison?.Holiday ? (analytics.holiday_comparison.Holiday.mean / 1e6).toFixed(2) : '1.12'}M`}
+          value={analytics?.holiday_comparison?.Holiday ? `$${(analytics.holiday_comparison.Holiday.mean / 1e6).toFixed(2)}M` : 'Unavailable'}
           subtitle="Observed during promotional holiday periods"
           icon={Calendar}
           accent="acid"
@@ -110,7 +131,7 @@ export const AnalyticsPage: React.FC = () => {
 
         <MetricCard
           title="Regular Mean Weekly Sales"
-          value={`$${analytics?.holiday_comparison?.['Non-Holiday'] ? (analytics.holiday_comparison['Non-Holiday'].mean / 1e6).toFixed(2) : '1.04'}M`}
+          value={analytics?.holiday_comparison?.['Non-Holiday'] ? `$${(analytics.holiday_comparison['Non-Holiday'].mean / 1e6).toFixed(2)}M` : 'Unavailable'}
           subtitle="Observed during standard trading weeks"
           icon={DollarSign}
           accent="cobalt"
@@ -118,10 +139,10 @@ export const AnalyticsPage: React.FC = () => {
 
         <MetricCard
           title="Holiday Sales Lift"
-          value={`+${analytics?.holiday_comparison?.sales_lift_pct?.toFixed(2) || '8.20'}%`}
+          value={analytics?.holiday_comparison.sales_lift_pct == null ? 'Unavailable' : `${analytics.holiday_comparison.sales_lift_pct.toFixed(2)}%`}
           subtitle="Net revenue uplift from holiday demand spikes"
           icon={Percent}
-          trendPositive={true}
+          trendPositive={analytics?.holiday_comparison.sales_lift_pct != null && analytics.holiday_comparison.sales_lift_pct >= 0}
           accent="acid"
         />
       </div>
@@ -129,9 +150,14 @@ export const AnalyticsPage: React.FC = () => {
       {/* Time-Series Trend Chart */}
       <BentoCard
         title={selectedStore ? `Store ${selectedStore}: Weekly Sales Timeline` : "Network Weekly Sales Revenue (USD Thousands)"}
-        subtitle="143 consecutive weekly observations from Feb 2010 to Oct 2012"
+        subtitle={analytics?.timeline.length ? `${analytics.timeline[0].Date_Str} to ${analytics.timeline[analytics.timeline.length - 1].Date_Str}` : 'No historical sales are available for this scope'}
       >
         <div className="h-72 w-full pt-2">
+          {timelineData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-xs text-slate-400">
+              Historical sales are unavailable for the selected dataset and store scope.
+            </div>
+          ) : (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
               <defs>
@@ -175,6 +201,7 @@ export const AnalyticsPage: React.FC = () => {
               />
             </AreaChart>
           </ResponsiveContainer>
+          )}
         </div>
       </BentoCard>
 
@@ -186,6 +213,11 @@ export const AnalyticsPage: React.FC = () => {
           subtitle="Average historical weekly sales by calendar month"
         >
           <div className="h-64 w-full pt-2">
+            {monthlyData.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-xs text-slate-400">
+                Seasonality is unavailable for the selected dataset scope.
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthlyData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" vertical={false} />
@@ -210,16 +242,14 @@ export const AnalyticsPage: React.FC = () => {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            )}
           </div>
-          <p className="text-[11px] text-slate-400 mt-2 text-center">
-            November and December exhibit distinct surges driven by Thanksgiving and Christmas peak trading cycles.
-          </p>
         </BentoCard>
 
         {/* Top 5 & Bottom 5 Store Rankings */}
         <BentoCard
           title="Top Performing Stores by Revenue"
-          subtitle="Cumulative sales volume over 143 historical weeks"
+          subtitle="Stores ranked by observed cumulative sales in the active dataset"
         >
           <div className="space-y-3">
             {(rankings?.top_stores || []).map((s, idx) => (
@@ -247,4 +277,3 @@ export const AnalyticsPage: React.FC = () => {
     </div>
   );
 };
-

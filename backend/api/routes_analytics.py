@@ -36,9 +36,13 @@ def get_sales_analytics(store_id: Optional[int] = Query(None)):
                 "total": float(row["sum"])
             }
         
-        non_hol_mean = holiday_dict.get("Non-Holiday", {}).get("mean", 1)
-        hol_mean = holiday_dict.get("Holiday", {}).get("mean", 1)
-        lift_pct = ((hol_mean - non_hol_mean) / non_hol_mean) * 100 if non_hol_mean else 0
+        non_hol_mean = holiday_dict.get("Non-Holiday", {}).get("mean")
+        hol_mean = holiday_dict.get("Holiday", {}).get("mean")
+        lift_pct = (
+            ((hol_mean - non_hol_mean) / non_hol_mean) * 100
+            if non_hol_mean is not None and hol_mean is not None and non_hol_mean
+            else None
+        )
 
         # 3. Monthly seasonality aggregation
         work_df_month = work_df.copy()
@@ -83,7 +87,7 @@ def get_sales_analytics(store_id: Optional[int] = Query(None)):
             "timeline": weekly[["Date_Str", "Weekly_Sales", "Holiday_Flag"]].to_dict(orient="records"),
             "holiday_comparison": {
                 **holiday_dict,
-                "sales_lift_pct": float(lift_pct)
+                "sales_lift_pct": float(lift_pct) if lift_pct is not None else None
             },
             "monthly_seasonality": [
                 {"month": r["Month_Name"], "avg_sales": float(r["Weekly_Sales"])}
@@ -96,6 +100,8 @@ def get_sales_analytics(store_id: Optional[int] = Query(None)):
             "sales_distribution": sales_distribution,
             "store_comparison": store_comparison
         }
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -111,7 +117,8 @@ def get_store_rankings():
             Max_Weekly_Sales=("Weekly_Sales", "max"),
             Std_Sales=("Weekly_Sales", "std"),
             Observations=("Weekly_Sales", "count")
-        ).reset_index().sort_values("Avg_Weekly_Sales", ascending=False)
+        ).reset_index().sort_values("Total_Sales", ascending=False)
+        store_stats["Std_Sales"] = store_stats["Std_Sales"].fillna(0.0)
 
         top_5 = store_stats.head(5).to_dict(orient="records")
         bottom_5 = store_stats.tail(5).sort_values("Avg_Weekly_Sales").to_dict(orient="records")
@@ -122,5 +129,7 @@ def get_store_rankings():
             "top_stores": top_5,
             "bottom_stores": bottom_5
         }
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

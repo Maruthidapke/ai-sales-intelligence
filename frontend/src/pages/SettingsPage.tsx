@@ -1,20 +1,23 @@
-import React from 'react';
-import {
-  Settings,
-  Sliders,
-  Shield,
-  Info,
-  Cpu,
-  Layers,
-  Code2,
-  FileCheck,
-  CheckCircle2
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Info } from 'lucide-react';
 
 import { BentoCard } from '../components/BentoCard';
-import { StatusPill } from '../components/StatusPill';
+import { apiClient } from '../api/client';
+import { DatasetSummary } from '../types/api';
 
 export const SettingsPage: React.FC = () => {
+  const [dataset, setDataset] = useState<DatasetSummary | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiClient.getDatasetSummary()
+      .then(setDataset)
+      .catch((error) => {
+        console.error(error);
+        setLoadError('Active dataset metadata is unavailable.');
+      });
+  }, []);
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
@@ -23,8 +26,9 @@ export const SettingsPage: React.FC = () => {
         <div className="text-xs space-y-1">
           <h3 className="font-bold text-white text-sm">Platform Architecture & Mathematical Formulations</h3>
           <p className="text-slate-300 leading-relaxed">
-            The platform executes reproducible retail forecasting workflows derived from the Walmart dataset (6,435 observations, 45 stores, 143 weeks). Below are the active production hyperparameters, leakage prevention rules, and operational constraints.
+            Active dataset: {dataset?.original_filename || (dataset ? 'Canonical dataset' : 'Loading')} · {dataset ? `${dataset.total_rows.toLocaleString()} records, ${dataset.total_stores} stores, ${dataset.weeks_per_store} minimum weeks per store` : 'dataset statistics loading'}. Forecasts and diagnostics use the selected dataset.
           </p>
+          {loadError && <p className="text-rose-300">{loadError}</p>}
         </div>
       </div>
 
@@ -75,7 +79,7 @@ export const SettingsPage: React.FC = () => {
             </div>
             <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
               <span className="text-slate-400">Calibration Window:</span>
-              <span className="font-mono text-white">16 Weeks (720 Observations)</span>
+              <span className="font-mono text-white">Up to 16 chronological weeks</span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
               <span className="text-slate-400">Normalization Scale:</span>
@@ -83,11 +87,11 @@ export const SettingsPage: React.FC = () => {
             </div>
             <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
               <span className="text-slate-400">Quantile Alert Floor:</span>
-              <span className="font-mono text-white">-18.81% (5th Percentile)</span>
+              <span className="font-mono text-white">Active-data 5th percentile</span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
               <span className="text-slate-400">Quantile Alert Ceiling:</span>
-              <span className="font-mono text-white">+24.17% (95th Percentile)</span>
+              <span className="font-mono text-white">Active-data 95th percentile</span>
             </div>
             <div className="flex justify-between py-1.5">
               <span className="text-slate-400">Fixed Baseline Comparison:</span>
@@ -103,7 +107,7 @@ export const SettingsPage: React.FC = () => {
         >
           <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
             <p>
-              1. <strong>Strict Chronological Split:</strong> The 14-week test holdout (27 July to 26 October 2012) is held completely separate. No test targets are ever used in preprocessing, lag calculations, or parameter tuning.
+              1. <strong>Strict Chronological Split:</strong> Training rows precede holdout rows. Preprocessing is fitted on training data only; holdout targets are not used in feature construction or model fitting.
             </p>
             <p>
               2. <strong>Past-Only Shift Operators:</strong> Every rolling mean and standard deviation enforces <code className="text-cobalt-glow font-mono text-[11px]">.shift(1)</code> before calculation. Lags start strictly at Lag 1 (1 week prior).
@@ -121,13 +125,13 @@ export const SettingsPage: React.FC = () => {
         >
           <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
             <p>
-              &bull; <strong>Historical Horizon:</strong> Predictions are strictly historical (2 November 2012) and do not reflect contemporary Walmart operations.
+              &bull; <strong>History Requirement:</strong> Advanced models need at least 54 weekly observations per store and 50 supervised rows after the 53-week feature warm-up. Short datasets can use the Last-week baseline when it has enough history.
             </p>
             <p>
-              &bull; <strong>Store 36 Coverage:</strong> Aggregate coverage of 98.89% does not guarantee reliable intervals for every store; Store 36 observed only 78.57% holdout coverage.
+              &bull; <strong>Forecast Horizon:</strong> The default target is one week after the latest active observation. Forecasts are limited to 52 weekly steps and may be historical relative to today when the uploaded data is old.
             </p>
             <p>
-              &bull; <strong>Single Holiday Cycle:</strong> After the 53-week warm-up, only a single Thanksgiving/Christmas cycle remains in the development set.
+              &bull; <strong>Prediction Intervals:</strong> Empirical intervals are available only for supported one-week Random Forest forecasts with enough chronological calibration data; baselines do not claim calibrated bounds.
             </p>
           </div>
         </BentoCard>
@@ -135,4 +139,3 @@ export const SettingsPage: React.FC = () => {
     </div>
   );
 };
-

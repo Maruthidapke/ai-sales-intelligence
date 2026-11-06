@@ -5,12 +5,16 @@ interface NavbarProps {
   onToggleSidebar: () => void;
   activeTab: string;
   onQuickForecast: () => void;
+  onAudit: () => void;
+  onExportPdf: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onToggleSidebar,
   activeTab,
   onQuickForecast,
+  onAudit,
+  onExportPdf,
 }) => {
   const titles: Record<string, { title: string; subtitle: string }> = {
     dashboard: { title: 'Executive Overview', subtitle: 'Real-time retail KPIs and historical performance telemetry' },
@@ -57,22 +61,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="hidden md:inline">Run Live Forecast</span>
         </button>
 
-        <a
-          href="/api/reports/pdf"
-          download
+        <button
+          onClick={onExportPdf}
           className="flex items-center gap-2 px-3.5 py-2 rounded-xl glass-panel hover:bg-white/[0.08] text-slate-200 text-xs font-medium border border-white/[0.1] transition-all duration-200"
         >
           <FileDown className="w-3.5 h-3.5 text-cobalt-glow" />
           <span className="hidden sm:inline">Export PDF</span>
-        </a>
+        </button>
 
         {/* Verified Badge */}
-        <div className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.07] text-[11px] text-slate-300">
+        <button
+          onClick={onAudit}
+          className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.07] text-[11px] text-slate-300 hover:bg-white/[0.08] transition-colors"
+        >
           <ShieldCheck className="w-3.5 h-3.5 text-acid-light" />
           <span>Zero-Leakage Contract</span>
-        </div>
+        </button>
       </div>
     </header>
   );
 };
-

@@ -1,6 +1,7 @@
 import io
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+from xml.sax.saxutils import escape
 import pandas as pd
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -13,9 +14,11 @@ def generate_pdf_report(
     summary_data: Dict[str, Any],
     benchmarks: List[Dict[str, Any]],
     forecasts: List[Dict[str, Any]],
-    reliability: Dict[str, Any]
+    reliability: Dict[str, Any],
+    forecast_unavailable_reason: str = "No forecast has been generated or is available for this dataset.",
+    scope_context: Optional[Dict[str, Any]] = None,
 ) -> bytes:
-    """Generates an executive PDF report with styling and actual calculated metrics."""
+    """Generates an executive report using active-dataset facts and available calculations."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -70,7 +73,7 @@ def generate_pdf_report(
     # Title & Subtitle
     story.append(Paragraph("AI-Based Retail Sales Prediction & Forecasting Platform", title_style))
     story.append(Paragraph(
-        f"Executive Analytics Report & Model Evaluation | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Target: Walmart Historical Dataset",
+        f"Executive Analytics Report & Model Evaluation | Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Dataset: {escape(str(summary_data.get('original_filename', 'Active dataset')))}",
         subtitle_style
     ))
     story.append(Spacer(1, 10))
@@ -79,9 +82,9 @@ def generate_pdf_report(
     story.append(Paragraph("1. Executive Dataset Summary", heading_style))
     sum_data = [
         ["Total Historical Sales", f"${summary_data.get('total_sales', 0):,.2f}", "Total Stores", str(summary_data.get('total_stores', 45))],
-        ["Mean Weekly Sales", f"${summary_data.get('mean_weekly_sales', 0):,.2f}", "Total Records", f"{summary_data.get('total_rows', 6435):,}"],
-        ["Min Date", str(summary_data.get('min_date', '2010-02-05')), "Max Date", str(summary_data.get('max_date', '2012-10-26'))],
-        ["Integrity Verification", "PASSED (Zero missing / Zero duplicates)", "Dataset SHA-256", f"{summary_data.get('sha256', '')[:16]}..."]
+        ["Mean Weekly Sales", f"${summary_data.get('mean_weekly_sales', 0):,.2f}", "Total Records", f"{summary_data.get('total_rows', 0):,}"],
+        ["Min Date", str(summary_data.get('min_date', 'Unavailable')), "Max Date", str(summary_data.get('max_date', 'Unavailable'))],
+        ["Integrity Verification", f"{summary_data.get('missing_cells', 'N/A')} missing / {summary_data.get('duplicate_rows', 'N/A')} duplicate rows", "Dataset SHA-256", f"{summary_data.get('sha256', '')[:16]}..."]
     ]
     t_sum = Table(sum_data, colWidths=[130, 130, 130, 140])
     t_sum.setStyle(TableStyle([
@@ -96,8 +99,33 @@ def generate_pdf_report(
     story.append(t_sum)
     story.append(Spacer(1, 12))
 
-    # 2. Benchmark Comparison
-    story.append(Paragraph("2. Original Benchmark Model Evaluation (14-Week Holdout)", heading_style))
+    story.append(Paragraph("2. Dataset Coverage & Available Analytics", heading_style))
+    scope_context = scope_context or {}
+    selected_store = scope_context.get("store_id")
+    requested_model = escape(str(scope_context.get("model_name") or "Not selected"))
+    requested_date = escape(str(scope_context.get("forecast_date") or "Not selected"))
+    date_mode = escape(str(scope_context.get("date_mode") or "Not specified"))
+    story.append(Paragraph(
+        f"Active source: {summary_data.get('original_filename', 'Active dataset')}. "
+        f"Report scope: {f'Store {selected_store}' if selected_store is not None else 'All stores'}; "
+        f"requested model: {requested_model}; target date: {requested_date} ({date_mode} mode). "
+        f"{summary_data.get('total_rows', 0):,} records across "
+        f"{summary_data.get('total_stores', 0)} stores, spanning "
+        f"{summary_data.get('min_date', 'Unavailable')} to {summary_data.get('max_date', 'Unavailable')}. "
+        f"Mean weekly store sales: ${summary_data.get('mean_weekly_sales', 0):,.2f}; "
+        f"median: ${summary_data.get('median_weekly_sales', 0):,.2f}.",
+        body_style,
+    ))
+    story.append(Spacer(1, 10))
+
+    # 3. Benchmark Comparison
+    story.append(Paragraph("3. Active Dataset Chronological Holdout Model Evaluation", heading_style))
+    if not benchmarks:
+        story.append(Paragraph(
+            "Model-comparison analytics are unavailable because the active dataset does not contain enough "
+            "supervised history for a chronological model evaluation. No accuracy metrics are reported.",
+            body_style,
+        ))
     bench_table_data = [["Model Name", "Type", "MAE (USD)", "RMSE (USD)", "WAPE (%)", "R² Score"]]
     for row in benchmarks:
         bench_table_data.append([
@@ -122,30 +150,59 @@ def generate_pdf_report(
     story.append(t_bench)
     story.append(Spacer(1, 12))
 
-    # 3. Forecast Reliability
-    story.append(Paragraph("3. Empirical Prediction Band Reliability & Caveats", heading_style))
-    story.append(Paragraph(
-        "<b>Important Retail Finding:</b> The unified point-and-band workflow achieved <b>98.89% overall empirical coverage</b> "
-        "on the holdout period with mean band width of $340,857.45. However, individual store analysis revealed that <b>Store 36 achieved only 78.57%</b> "
-        "coverage (below nominal 90%). Empirical prediction bands do not guarantee future or conditional coverage for every individual store.",
-        body_style
-    ))
+    # 4. Forecast Reliability
+    story.append(Paragraph("4. Empirical Prediction Band Reliability & Caveats", heading_style))
+    workflows = reliability.get("workflows", [])
+    workflow = workflows[0] if workflows else {}
+    coverage = workflow.get("overall_coverage")
+    mean_width = workflow.get("mean_width_usd")
+    reliability_text = (
+        f"Empirical coverage: {coverage:.2f}%; mean interval width: ${mean_width:,.2f}. "
+        "These values describe the supplied evaluation results and do not guarantee future or per-store coverage."
+        if coverage is not None and mean_width is not None
+        else "Prediction-interval reliability was unavailable for this active dataset; no coverage claim is made."
+    )
+    story.append(Paragraph(reliability_text, body_style))
     story.append(Spacer(1, 12))
 
-    # 4. Upcoming Forecast Preview
-    fc_date = forecasts[0].get("Forecast_Date", "Upcoming Horizon") if forecasts else "Upcoming Horizon"
-    story.append(Paragraph(f"4. 1-Week-Ahead Sales Forecast (Date: {fc_date})", heading_style))
+    # 5. Forecast Results
+    fc_date = forecasts[0].get("Forecast_Date") if forecasts else None
+    forecast_model = forecasts[0].get("Status", "Available forecast") if forecasts else None
+    story.append(Paragraph(
+        f"5. Forecast Results{f' — {fc_date}' if fc_date else ''}",
+        heading_style,
+    ))
+    if not forecasts:
+        story.append(Paragraph(
+            f"No forecast results are included. {forecast_unavailable_reason} "
+            "The report contains dataset information and available analytics only.",
+            body_style,
+        ))
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.getvalue()
+    story.append(Paragraph(
+        f"Method: {forecast_model}. Stores forecasted: {len(forecasts)}. "
+        "Prediction bounds are included only when supported by calibration.",
+        body_style,
+    ))
     fc_table_data = [["Store", "Forecast (USD)", "90% Lower Bound", "90% Upper Bound", "13W Prior Mean", "Shift (%)", "Alert Status"]]
     # Top 15 stores preview
+    def format_bound(value):
+        return f"${value:,.2f}" if value is not None else "Unavailable"
+
+    def format_percent(value):
+        return f"{value:+.1f}%" if value is not None else "Unavailable"
+
     for row in forecasts[:15]:
         fc_table_data.append([
             f"Store {row.get('Store')}",
-            f"${row.get('Forecast_Sales', 0):,.2f}",
-            f"${row.get('Lower_Bound', 0):,.2f}",
-            f"${row.get('Upper_Bound', 0):,.2f}",
-            f"${row.get('Prior_13W_Mean', 0):,.2f}",
-            f"{row.get('Change_vs_Mean_Pct', 0):+.1f}%",
-            row.get('Alert', 'NORMAL')
+            format_bound(row.get('Forecast_Sales')),
+            format_bound(row.get('Lower_Bound')),
+            format_bound(row.get('Upper_Bound')),
+            format_bound(row.get('Prior_13W_Mean')),
+            format_percent(row.get("Change_vs_Mean_Pct")),
+            row.get('Alert', 'UNAVAILABLE')
         ])
     t_fc = Table(fc_table_data, colWidths=[65, 85, 85, 85, 85, 60, 65])
     t_fc.setStyle(TableStyle([
@@ -160,7 +217,11 @@ def generate_pdf_report(
     ]))
     story.append(t_fc)
     story.append(Spacer(1, 10))
-    story.append(Paragraph("<i>Note: Showing first 15 of 45 stores. Full store forecast available via CSV export.</i>", body_style))
+    story.append(Paragraph(
+        f"<i>Showing {min(15, len(forecasts))} of {len(forecasts)} store forecasts. "
+        "Intervals are marked unavailable unless calibrated on earlier data.</i>",
+        body_style,
+    ))
 
     doc.build(story)
     buffer.seek(0)
@@ -169,4 +230,3 @@ def generate_pdf_report(
 def generate_forecasts_csv(forecasts: List[Dict[str, Any]]) -> str:
     df = pd.DataFrame(forecasts)
     return df.to_csv(index=False)
-
